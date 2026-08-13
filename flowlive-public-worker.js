@@ -20,6 +20,7 @@ function withSecurityHeaders(response, isHtml = false) {
   headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
   headers.set("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
   if (isHtml) {
+    headers.set("Content-Type", "text/html; charset=UTF-8");
     headers.set("Content-Security-Policy", "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self'; font-src 'self' data:; base-uri 'self'; form-action 'self'");
   }
   return new Response(response.body, { status: response.status, headers });
