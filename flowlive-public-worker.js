@@ -2,6 +2,7 @@ const SITE_ORIGIN = "https://raw.githubusercontent.com";
 const SITE_BASE_PATH = "/leobhz/flowlive-public/main";
 const ALLOWED_ORIGINS = new Set(["https://flow-live.com", "https://www.flow-live.com"]);
 const ALLOWED_LIVE_VOLUMES = new Set(["até_2", "3_a_8", "9_ou_mais"]);
+const TRACKING_FIELDS = ["utm_source", "utm_medium", "utm_campaign", "utm_content", "utm_term", "fbclid"];
 
 function json(body, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -43,6 +44,53 @@ function validEmail(email) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 }
 
+function normalizeTrackingValue(value, maxLength = 255) {
+  return typeof value === "string" ? value.trim().slice(0, maxLength) : null;
+}
+
+function normalizeLandingUrl(value) {
+  const raw = normalizeTrackingValue(value, 2_000);
+  if (!raw) return null;
+
+  try {
+    const url = new URL(raw);
+    if (url.protocol !== "https:" || !ALLOWED_ORIGINS.has(url.origin)) return null;
+
+    const params = new URLSearchParams();
+    for (const field of TRACKING_FIELDS) {
+      const tracked = normalizeTrackingValue(url.searchParams.get(field));
+      if (tracked) params.set(field, tracked);
+    }
+    const query = params.toString();
+    return `${url.origin}${url.pathname}${query ? `?${query}` : ""}`;
+  } catch {
+    return null;
+  }
+}
+
+function normalizeReferrer(value) {
+  const raw = normalizeTrackingValue(value, 2_000);
+  if (!raw) return null;
+
+  try {
+    const url = new URL(raw);
+    if (!["https:", "http:"].includes(url.protocol)) return null;
+    return `${url.origin}${url.pathname}`.slice(0, 1_000);
+  } catch {
+    return null;
+  }
+}
+
+function getAttribution(payload) {
+  const attribution = {};
+  for (const field of TRACKING_FIELDS) {
+    attribution[field] = normalizeTrackingValue(payload?.[field]);
+  }
+  attribution.entryUrl = normalizeLandingUrl(payload?.entryUrl);
+  attribution.referrer = normalizeReferrer(payload?.referrer);
+  return attribution;
+}
+
 function waitlistValidation(payload) {
   const name = normalizeText(payload?.name);
   const company = normalizeText(payload?.company);
@@ -58,7 +106,7 @@ function waitlistValidation(payload) {
   if (!ALLOWED_LIVE_VOLUMES.has(liveVolume)) return { error: "Selecione a faixa mensal de lives." };
   if (!contactConsent) return { error: "É necessário autorizar o contato sobre a lista de espera." };
 
-  return { name, company, email, whatsapp, liveVolume, contactConsent };
+  return { name, company, email, whatsapp, liveVolume, contactConsent, ...getAttribution(payload) };
 }
 
 async function sendWelcomeEmail(env, lead) {
@@ -107,9 +155,9 @@ async function handleWaitlist(request, env) {
 
   const now = new Date().toISOString();
   const insert = await env.LEADS_DB.prepare(
-    "INSERT INTO waitlist_leads (name, company, email, whatsapp, live_volume, contact_consent, consent_at, source, email_status, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'flow-live.com', 'pending', ?7, ?7)",
+    "INSERT INTO waitlist_leads (name, company, email, whatsapp, live_volume, contact_consent, consent_at, source, email_status, utm_source, utm_medium, utm_campaign, utm_content, utm_term, fbclid, entry_url, referrer, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'flow-live.com', 'pending', ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?7, ?7)",
   )
-    .bind(lead.name, lead.company, lead.email, lead.whatsapp, lead.liveVolume, 1, now)
+    .bind(lead.name, lead.company, lead.email, lead.whatsapp, lead.liveVolume, 1, now, lead.utm_source, lead.utm_medium, lead.utm_campaign, lead.utm_content, lead.utm_term, lead.fbclid, lead.entryUrl, lead.referrer)
     .run();
 
   const leadId = insert.meta.last_row_id;

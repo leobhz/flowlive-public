@@ -11,8 +11,17 @@ CREATE TABLE IF NOT EXISTS waitlist_leads (
   email_status TEXT NOT NULL DEFAULT 'pending',
   email_provider_id TEXT,
   email_sent_at TEXT,
+  utm_source TEXT,
+  utm_medium TEXT,
+  utm_campaign TEXT,
+  utm_content TEXT,
+  utm_term TEXT,
+  fbclid TEXT,
+  entry_url TEXT,
+  referrer TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_waitlist_leads_created_at ON waitlist_leads (created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_waitlist_leads_utm_campaign ON waitlist_leads (utm_source, utm_campaign);

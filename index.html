@@ -125,6 +125,56 @@
     const waitlistForm = document.getElementById('waitlistForm');
     const waitlistFeedback = document.getElementById('waitlistFeedback');
     const waitlistSubmit = waitlistForm?.querySelector('button[type="submit"]');
+    const attributionStorageKey = 'flowlive.waitlist-attribution.v1';
+    const attributionFields = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term', 'fbclid'];
+
+    function trimTrackingValue(value, maxLength = 255) {
+      return typeof value === 'string' ? value.trim().slice(0, maxLength) : '';
+    }
+
+    function sanitizeReferrer(value) {
+      if (!value) return '';
+      try {
+        const url = new URL(value);
+        return `${url.origin}${url.pathname}`.slice(0, 1000);
+      } catch {
+        return '';
+      }
+    }
+
+    function createAttribution() {
+      const pageUrl = new URL(window.location.href);
+      const tracking = {};
+      const entryParams = new URLSearchParams();
+      attributionFields.forEach((field) => {
+        const value = trimTrackingValue(pageUrl.searchParams.get(field));
+        tracking[field] = value;
+        if (value) entryParams.set(field, value);
+      });
+
+      const entryUrl = `${pageUrl.origin}${pageUrl.pathname}${entryParams.size ? `?${entryParams.toString()}` : ''}`;
+      return { ...tracking, entryUrl, referrer: sanitizeReferrer(document.referrer) };
+    }
+
+    function getAttribution() {
+      try {
+        const current = createAttribution();
+        const hasTracking = attributionFields.some((field) => current[field]);
+        if (hasTracking) {
+          window.sessionStorage.setItem(attributionStorageKey, JSON.stringify(current));
+          return current;
+        }
+
+        const stored = window.sessionStorage.getItem(attributionStorageKey);
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          if (parsed && typeof parsed === 'object') return parsed;
+        }
+        return current;
+      } catch {
+        return createAttribution();
+      }
+    }
 
     waitlistForm?.addEventListener('submit', async (event) => {
       event.preventDefault();
@@ -141,6 +191,7 @@
         whatsapp: String(data.get('whatsapp')).trim(),
         liveVolume: String(data.get('liveVolume')),
         contactConsent: data.get('contactConsent') === 'on',
+        ...getAttribution(),
       };
 
       waitlistFeedback.textContent = 'Enviando seu interesse…';
