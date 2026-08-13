@@ -1,5 +1,6 @@
 const SITE_ORIGIN = "https://raw.githubusercontent.com";
 const SITE_BASE_PATH = "/leobhz/flowlive-public/main";
+const PRIVATE_APP_ORIGIN = "https://flowliveapp-ki8zugp8.manus.space";
 const ALLOWED_ORIGINS = new Set(["https://flow-live.com", "https://www.flow-live.com"]);
 const ALLOWED_LIVE_VOLUMES = new Set(["até_2", "3_a_8", "9_ou_mais"]);
 const TRACKING_FIELDS = ["utm_source", "utm_medium", "utm_campaign", "utm_content", "utm_term", "fbclid"];
@@ -292,6 +293,9 @@ export default {
     const url = new URL(request.url);
     if (url.pathname.startsWith("/api/internal/leads")) return handleInternalLeads(request, env, url);
     if (url.pathname === "/api/waitlist") return handleWaitlist(request, env);
+    if (url.pathname === "/admin" || url.pathname.startsWith("/admin/") || url.pathname === "/loja" || url.pathname.startsWith("/loja/")) {
+      return Response.redirect(`${PRIVATE_APP_ORIGIN}${url.pathname}${url.search}`, 302);
+    }
     if (!["GET", "HEAD"].includes(request.method)) return new Response("Method not allowed", { status: 405, headers: { Allow: "GET, HEAD, POST" } });
 
     const publicDocuments = { "/privacidade": "/privacidade.html", "/termos": "/termos.html" };

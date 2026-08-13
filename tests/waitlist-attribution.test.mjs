@@ -130,4 +130,8 @@ for (const route of ["/privacidade", "/termos"]) {
   assert.equal(documentResponse.headers.get("Content-Type"), "text/html; charset=UTF-8");
 }
 
+const privatePanelResponse = await context.workerModule.fetch(new Request("https://flow-live.com/admin?from=landing"), {});
+assert.equal(privatePanelResponse.status, 302, "A rota privada no domínio público deve orientar o usuário, sem 404.");
+assert.equal(privatePanelResponse.headers.get("Location"), "https://flowliveapp-ki8zugp8.manus.space/admin?from=landing");
+
 console.log("waitlist-attribution: ok");
