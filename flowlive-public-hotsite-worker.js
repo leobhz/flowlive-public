@@ -5,8 +5,8 @@ const MAX_MESSAGE_LENGTH = 500;
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
-function json(body, status = 200) {
-  return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json; charset=UTF-8", "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" } });
+function json(body, status = 200, extraHeaders = {}) {
+  return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json; charset=UTF-8", "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff", ...extraHeaders } });
 }
 function secured(response, isHtml = false) {
   const headers = new Headers(response.headers);
@@ -74,7 +74,7 @@ async function googleCallback(request, env) {
   const profileId = `gp_${(await hmac(env.OAUTH_PROFILE_SALT, `${live.tenant_id}:google:${google.sub}`)).slice(0, 44)}`; const now = new Date().toISOString(); const avatar = cleanText(google?.picture, 1024) || null;
   await env.HOTSITE_DB.prepare("INSERT INTO public_profiles (public_profile_id, provider, display_name, avatar_url, profile_consent, marketing_consent, consented_at, created_at, updated_at) VALUES (?1, 'google', ?2, ?3, 1, 0, ?4, ?4, ?4) ON CONFLICT(public_profile_id) DO UPDATE SET display_name=excluded.display_name, avatar_url=excluded.avatar_url, profile_consent=1, consented_at=excluded.consented_at, updated_at=excluded.updated_at").bind(profileId, displayName, avatar, now).run();
   const identity = await signPayload(env, { profileId, tenantId: live.tenant_id, expiresAt: Date.now() + 2_592_000_000 });
-  return redirect(`${fallback}?login=success`, { "Set-Cookie": `${cookie("fl_identity", identity, 2_592_000, "/")}, ${cookie("fl_google_txn", "", 0, "/auth/google")}` });
+  return redirect(`${fallback}?login=success`, { "Set-Cookie": cookie("fl_identity", identity, 2_592_000, "/") });
 }
 async function logoutIdentity() { return json({ ok: true }, 200, { "Set-Cookie": cookie("fl_identity", "", 0, "/") }); }
 function authorizedSync(request, env) { return Boolean(env.SYNC_SECRET) && timingSafeEquals(request.headers.get("X-FlowLive-Sync-Secret") || "", env.SYNC_SECRET); }
