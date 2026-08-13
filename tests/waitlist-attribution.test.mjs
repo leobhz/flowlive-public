@@ -10,6 +10,8 @@ const context = {
   URLSearchParams,
   Request,
   Response,
+  Headers,
+  fetch: async () => new Response("<html>Documento público</html>", { status: 200, headers: { "Content-Type": "text/html" } }),
   console,
   globalThis: {},
 };
@@ -121,5 +123,11 @@ const deniedResponse = await context.workerModule.fetch(new Request("https://flo
   LEADS_PUBLIC_SYNC_SECRET: "s".repeat(32),
 });
 assert.equal(deniedResponse.status, 401, "O endpoint administrativo não pode responder sem segredo.");
+
+for (const route of ["/privacidade", "/termos"]) {
+  const documentResponse = await context.workerModule.fetch(new Request(`https://flow-live.com${route}`), {});
+  assert.equal(documentResponse.status, 200, `${route} precisa estar disponível publicamente.`);
+  assert.equal(documentResponse.headers.get("Content-Type"), "text/html; charset=UTF-8");
+}
 
 console.log("waitlist-attribution: ok");

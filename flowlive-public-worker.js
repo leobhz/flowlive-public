@@ -294,7 +294,8 @@ export default {
     if (url.pathname === "/api/waitlist") return handleWaitlist(request, env);
     if (!["GET", "HEAD"].includes(request.method)) return new Response("Method not allowed", { status: 405, headers: { Allow: "GET, HEAD, POST" } });
 
-    const path = url.pathname === "/" ? "/index.html" : url.pathname;
+    const publicDocuments = { "/privacidade": "/privacidade.html", "/termos": "/termos.html" };
+    const path = url.pathname === "/" ? "/index.html" : (publicDocuments[url.pathname] || url.pathname);
     const upstreamUrl = new URL(`${SITE_BASE_PATH}${path}`, SITE_ORIGIN);
     const upstreamResponse = await fetch(new Request(upstreamUrl, {
       method: request.method,
