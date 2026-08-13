@@ -24,11 +24,13 @@ function fromB64url(value) { const padded = value.replace(/-/g, "+").replace(/_/
 function randomToken(size = 32) { const bytes = new Uint8Array(size); crypto.getRandomValues(bytes); return b64url(bytes); }
 async function hmac(secret, value) { const key = await crypto.subtle.importKey("raw", encoder.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]); return b64url(new Uint8Array(await crypto.subtle.sign("HMAC", key, encoder.encode(value)))); }
 async function sha256(value) { return b64url(new Uint8Array(await crypto.subtle.digest("SHA-256", encoder.encode(value)))); }
-async function signPayload(env, payload) { const encoded = b64url(encoder.encode(JSON.stringify(payload))); return `${encoded}.${await hmac(env.OAUTH_STATE_SECRET, encoded)}`; }
-async function verifyPayload(env, token) { if (!token || !env.OAUTH_STATE_SECRET) return null; const [encoded, signature] = token.split("."); if (!encoded || !signature || !timingSafeEquals(await hmac(env.OAUTH_STATE_SECRET, encoded), signature)) return null; try { return JSON.parse(decoder.decode(fromB64url(encoded))); } catch { return null; } }
+async function stateKey(env) { return hmac(env.GOOGLE_CLIENT_SECRET, "flowlive-oauth-state-v1"); }
+async function profileKey(env) { return hmac(env.GOOGLE_CLIENT_SECRET, "flowlive-profile-derivation-v1"); }
+async function signPayload(env, payload) { const encoded = b64url(encoder.encode(JSON.stringify(payload))); return `${encoded}.${await hmac(await stateKey(env), encoded)}`; }
+async function verifyPayload(env, token) { if (!token || !env.GOOGLE_CLIENT_SECRET) return null; const [encoded, signature] = token.split("."); if (!encoded || !signature || !timingSafeEquals(await hmac(await stateKey(env), encoded), signature)) return null; try { return JSON.parse(decoder.decode(fromB64url(encoded))); } catch { return null; } }
 function cookies(request) { return Object.fromEntries((request.headers.get("Cookie") || "").split(/;\s*/).filter(Boolean).map(part => { const i = part.indexOf("="); return i < 0 ? [part, ""] : [part.slice(0, i), decodeURIComponent(part.slice(i + 1))]; })); }
 function cookie(name, value, maxAge, path = "/") { return `${name}=${encodeURIComponent(value)}; Path=${path}; Max-Age=${maxAge}; HttpOnly; Secure; SameSite=Lax`; }
-function oauthReady(env) { return Boolean(env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET && env.OAUTH_STATE_SECRET && env.OAUTH_PROFILE_SALT); }
+function oauthReady(env) { return Boolean(env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET); }
 function publicLiveRow(row) { return row ? { liveId: row.live_id, tenantId: row.tenant_id, tenantName: row.tenant_name, tenantLogo: row.tenant_logo, title: row.title, status: row.status, scheduledAt: row.scheduled_at, startedAt: row.started_at, endedAt: row.ended_at, playerUid: row.player_uid, accentColor: row.accent_color, surfaceColor: row.surface_color } : null; }
 async function parseBody(request) { if (Number(request.headers.get("Content-Length") || 0) > MAX_BODY_BYTES) return null; return request.json().catch(() => null); }
 async function getLive(env, liveId) { return env.HOTSITE_DB.prepare("SELECT * FROM public_lives WHERE live_id = ?1 LIMIT 1").bind(liveId).first(); }
@@ -71,7 +73,7 @@ async function googleCallback(request, env) {
   const tokens = await tokenResponse.json().catch(() => null); if (!tokenResponse.ok || !tokens?.access_token) return redirect(`${fallback}?login=failed`, { "Set-Cookie": cookie("fl_google_txn", "", 0, "/auth/google") });
   const profileResponse = await fetch("https://openidconnect.googleapis.com/v1/userinfo", { headers: { Authorization: `Bearer ${tokens.access_token}` } }); const google = await profileResponse.json().catch(() => null);
   const displayName = cleanText(google?.name, 80); if (!profileResponse.ok || !cleanText(google?.sub, 255) || displayName.length < 2) return redirect(`${fallback}?login=failed`, { "Set-Cookie": cookie("fl_google_txn", "", 0, "/auth/google") });
-  const profileId = `gp_${(await hmac(env.OAUTH_PROFILE_SALT, `${live.tenant_id}:google:${google.sub}`)).slice(0, 44)}`; const now = new Date().toISOString(); const avatar = cleanText(google?.picture, 1024) || null;
+  const profileId = `gp_${(await hmac(await profileKey(env), `${live.tenant_id}:google:${google.sub}`)).slice(0, 44)}`; const now = new Date().toISOString(); const avatar = cleanText(google?.picture, 1024) || null;
   await env.HOTSITE_DB.prepare("INSERT INTO public_profiles (public_profile_id, provider, display_name, avatar_url, profile_consent, marketing_consent, consented_at, created_at, updated_at) VALUES (?1, 'google', ?2, ?3, 1, 0, ?4, ?4, ?4) ON CONFLICT(public_profile_id) DO UPDATE SET display_name=excluded.display_name, avatar_url=excluded.avatar_url, profile_consent=1, consented_at=excluded.consented_at, updated_at=excluded.updated_at").bind(profileId, displayName, avatar, now).run();
   const identity = await signPayload(env, { profileId, tenantId: live.tenant_id, expiresAt: Date.now() + 2_592_000_000 });
   return redirect(`${fallback}?login=success`, { "Set-Cookie": cookie("fl_identity", identity, 2_592_000, "/") });
