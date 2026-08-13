@@ -34,6 +34,21 @@ function createD1Stub() {
   };
 }
 
+function createInternalLeadsDb() {
+  return {
+    prepare() {
+      return {
+        bind() {
+          return {
+            all: async () => ({ results: [] }),
+            run: async () => ({ meta: { changes: 1 } }),
+          };
+        },
+      };
+    },
+  };
+}
+
 const db = createD1Stub();
 const request = new Request("https://flow-live.com/api/waitlist", {
   method: "POST",
@@ -93,5 +108,18 @@ assert.equal(untrustedResponse.status, 200);
 const untrustedInsert = untrustedDb.calls.find(({ statement }) => statement.startsWith("INSERT INTO waitlist_leads"));
 assert.equal(untrustedInsert.params[13], null, "A URL de entrada precisa pertencer à Landing FlowLive.");
 assert.equal(untrustedInsert.params[14], null, "Referenciadores com protocolo inseguro não podem ser persistidos.");
+
+const internalDb = createInternalLeadsDb();
+const internalResponse = await context.workerModule.fetch(new Request("https://flow-live.com/api/internal/leads?status=new", {
+  headers: { "X-FlowLive-Leads-Secret": "s".repeat(32) },
+}), { LEADS_DB: internalDb, LEADS_PUBLIC_SYNC_SECRET: "s".repeat(32) });
+assert.equal(internalResponse.status, 200, "O endpoint administrativo deve aceitar o segredo configurado.");
+assert.deepEqual(await internalResponse.json(), { leads: [] });
+
+const deniedResponse = await context.workerModule.fetch(new Request("https://flow-live.com/api/internal/leads"), {
+  LEADS_DB: internalDb,
+  LEADS_PUBLIC_SYNC_SECRET: "s".repeat(32),
+});
+assert.equal(deniedResponse.status, 401, "O endpoint administrativo não pode responder sem segredo.");
 
 console.log("waitlist-attribution: ok");

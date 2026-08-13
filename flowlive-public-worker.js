@@ -3,6 +3,8 @@ const SITE_BASE_PATH = "/leobhz/flowlive-public/main";
 const ALLOWED_ORIGINS = new Set(["https://flow-live.com", "https://www.flow-live.com"]);
 const ALLOWED_LIVE_VOLUMES = new Set(["até_2", "3_a_8", "9_ou_mais"]);
 const TRACKING_FIELDS = ["utm_source", "utm_medium", "utm_campaign", "utm_content", "utm_term", "fbclid"];
+const LEAD_STATUSES = new Set(["new", "contacted", "diagnosis", "qualified", "onboarding", "lost"]);
+const LEAD_PRIORITIES = new Set(["low", "normal", "high", "urgent"]);
 
 function json(body, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -89,6 +91,113 @@ function getAttribution(payload) {
   attribution.entryUrl = normalizeLandingUrl(payload?.entryUrl);
   attribution.referrer = normalizeReferrer(payload?.referrer);
   return attribution;
+}
+
+function secretsMatch(expected, received) {
+  if (typeof expected !== "string" || typeof received !== "string" || expected.length < 32 || expected.length !== received.length) return false;
+  let difference = 0;
+  for (let index = 0; index < expected.length; index += 1) difference |= expected.charCodeAt(index) ^ received.charCodeAt(index);
+  return difference === 0;
+}
+
+function authorizedForLeads(request, env) {
+  return secretsMatch(env.LEADS_PUBLIC_SYNC_SECRET, request.headers.get("X-FlowLive-Leads-Secret") || "");
+}
+
+function normalizeWorkflowText(value, maxLength) {
+  return typeof value === "string" ? value.trim().slice(0, maxLength) : null;
+}
+
+function leadRow(row) {
+  return {
+    id: row.id,
+    name: row.name,
+    company: row.company,
+    email: row.email,
+    whatsapp: row.whatsapp,
+    liveVolume: row.live_volume,
+    emailStatus: row.email_status,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    status: row.lead_status,
+    owner: row.owner,
+    priority: row.priority,
+    nextContactAt: row.next_contact_at,
+    notes: row.notes,
+    utmSource: row.utm_source,
+    utmMedium: row.utm_medium,
+    utmCampaign: row.utm_campaign,
+    utmContent: row.utm_content,
+    utmTerm: row.utm_term,
+    fbclid: row.fbclid,
+    entryUrl: row.entry_url,
+    referrer: row.referrer,
+  };
+}
+
+async function listInternalLeads(env, url) {
+  if (!env.LEADS_DB) return json({ error: "Base de leads temporariamente indisponível." }, 503);
+
+  const filters = [];
+  const values = [];
+  const addFilter = (sql, value) => { filters.push(sql); values.push(value); };
+  const query = normalizeWorkflowText(url.searchParams.get("q"), 120);
+  const status = normalizeWorkflowText(url.searchParams.get("status"), 24);
+  const priority = normalizeWorkflowText(url.searchParams.get("priority"), 24);
+  const utmSource = normalizeTrackingValue(url.searchParams.get("utm_source"));
+  const utmCampaign = normalizeTrackingValue(url.searchParams.get("utm_campaign"));
+
+  if (query) {
+    const term = `%${query.toLowerCase()}%`;
+    filters.push("(LOWER(name) LIKE ? OR LOWER(company) LIKE ? OR LOWER(email) LIKE ? OR whatsapp LIKE ?)");
+    values.push(term, term, term, `%${query}%`);
+  }
+  if (status && LEAD_STATUSES.has(status)) addFilter("lead_status = ?", status);
+  if (priority && LEAD_PRIORITIES.has(priority)) addFilter("priority = ?", priority);
+  if (utmSource) addFilter("utm_source = ?", utmSource);
+  if (utmCampaign) addFilter("utm_campaign = ?", utmCampaign);
+
+  const requestedLimit = Number(url.searchParams.get("limit") || 100);
+  const limit = Number.isInteger(requestedLimit) ? Math.min(Math.max(requestedLimit, 1), 250) : 100;
+  const where = filters.length ? `WHERE ${filters.join(" AND ")}` : "";
+  const statement = env.LEADS_DB.prepare(`SELECT id, name, company, email, whatsapp, live_volume, email_status, created_at, updated_at, lead_status, owner, priority, next_contact_at, notes, utm_source, utm_medium, utm_campaign, utm_content, utm_term, fbclid, entry_url, referrer FROM waitlist_leads ${where} ORDER BY CASE priority WHEN 'urgent' THEN 1 WHEN 'high' THEN 2 WHEN 'normal' THEN 3 ELSE 4 END, created_at DESC LIMIT ?`);
+  const result = await statement.bind(...values, limit).all();
+  return json({ leads: (result.results || []).map(leadRow) });
+}
+
+async function updateInternalLead(request, env, id) {
+  if (!env.LEADS_DB) return json({ error: "Base de leads temporariamente indisponível." }, 503);
+  const payload = await request.json().catch(() => null);
+  if (!payload || typeof payload !== "object") return json({ error: "Atualização inválida." }, 400);
+
+  const updates = [];
+  const values = [];
+  const set = (column, value) => { updates.push(`${column} = ?`); values.push(value); };
+  if (typeof payload.status === "string" && LEAD_STATUSES.has(payload.status)) set("lead_status", payload.status);
+  if (typeof payload.priority === "string" && LEAD_PRIORITIES.has(payload.priority)) set("priority", payload.priority);
+  if (payload.owner === null || typeof payload.owner === "string") set("owner", payload.owner === null ? null : normalizeWorkflowText(payload.owner, 160));
+  if (payload.nextContactAt === null || typeof payload.nextContactAt === "string") {
+    const nextContactAt = payload.nextContactAt === null ? null : normalizeWorkflowText(payload.nextContactAt, 64);
+    if (nextContactAt && Number.isNaN(Date.parse(nextContactAt))) return json({ error: "Próximo contato inválido." }, 400);
+    set("next_contact_at", nextContactAt);
+  }
+  if (payload.notes === null || typeof payload.notes === "string") set("notes", payload.notes === null ? null : normalizeWorkflowText(payload.notes, 5_000));
+  if (!updates.length) return json({ error: "Nenhuma alteração comercial válida foi informada." }, 400);
+
+  const now = new Date().toISOString();
+  updates.push("updated_at = ?");
+  values.push(now, id);
+  const result = await env.LEADS_DB.prepare(`UPDATE waitlist_leads SET ${updates.join(", ")} WHERE id = ?`).bind(...values).run();
+  if (!result.meta.changes) return json({ error: "Lead não encontrado." }, 404);
+  return json({ updated: true, id });
+}
+
+async function handleInternalLeads(request, env, url) {
+  if (!authorizedForLeads(request, env)) return json({ error: "Não autorizado." }, 401);
+  if (request.method === "GET" && url.pathname === "/api/internal/leads") return listInternalLeads(env, url);
+  const match = url.pathname.match(/^\/api\/internal\/leads\/(\d+)$/);
+  if (request.method === "PATCH" && match) return updateInternalLead(request, env, Number(match[1]));
+  return json({ error: "Método não permitido." }, 405);
 }
 
 function waitlistValidation(payload) {
@@ -181,6 +290,7 @@ async function handleWaitlist(request, env) {
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
+    if (url.pathname.startsWith("/api/internal/leads")) return handleInternalLeads(request, env, url);
     if (url.pathname === "/api/waitlist") return handleWaitlist(request, env);
     if (!["GET", "HEAD"].includes(request.method)) return new Response("Method not allowed", { status: 405, headers: { Allow: "GET, HEAD, POST" } });
 
