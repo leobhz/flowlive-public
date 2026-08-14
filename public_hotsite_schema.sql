@@ -11,6 +11,12 @@ CREATE TABLE IF NOT EXISTS public_lives (
   player_uid TEXT,
   accent_color TEXT NOT NULL DEFAULT '#F4821F',
   surface_color TEXT NOT NULL DEFAULT '#0D0D14',
+  profile_avatar TEXT,
+  profile_bio TEXT,
+  instagram_handle TEXT,
+  instagram_url TEXT,
+  wallpaper_url TEXT,
+  wallpaper_preset TEXT NOT NULL DEFAULT 'minimal',
   updated_at TEXT NOT NULL
 );
 
