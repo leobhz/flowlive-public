@@ -8,4 +8,9 @@ assert.match(source, /image\.onerror=\(\)=>\{image\.remove\(\);parent\.append\(f
 assert.match(source, /\.product \.product-image-fallback/, "O card de produto precisa dimensionar a contingência visual.");
 assert.match(source, /\.featured \.product-image-fallback/, "O produto em destaque precisa dimensionar a contingência visual.");
 
+const workerSource = await readFile(new URL("../flowlive-public-hotsite-worker.js", import.meta.url), "utf8");
+assert.match(workerSource, /function publicAssetUrl\(value, limit = 1024\)/, "O Worker precisa normalizar ativos antes da projeção pública.");
+assert.match(workerSource, /candidate\.startsWith\("\/manus-storage\/"\)\) return null/, "Caminhos internos não podem ser projetados ao hotsite.");
+assert.match(workerSource, /publicAssetUrl\(product\.imageUrl\)/, "Imagens internas de catálogo precisam virar contingência pública.");
+
 console.log("hotsite-public-assets: ok");
